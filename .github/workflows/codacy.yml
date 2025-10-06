@@ -11,6 +11,11 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        python-version: ['3.10','3.11','3.12']
+
     services:
       mysql:
         image: mysql:5.7
@@ -21,7 +26,11 @@ jobs:
           MYSQL_PASSWORD: uvlhub_password
         ports:
           - 3306:3306
-        options: --health-cmd="mysqladmin ping" --health-interval=10s --health-timeout=5s --health-retries=3
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -uuvlhub_user -puvlhub_password"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=3
 
     steps:
     - name: Checkout code
@@ -30,19 +39,47 @@ jobs:
     - name: Set up Python
       uses: actions/setup-python@v5
       with:
-        python-version: '3.12'
+        python-version: ${{ matrix.python-version }}
 
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
         pip install -r requirements.txt
 
-    - name: Upload coverage to Codacy
+    - name: Check for outdated dependencies
+      run: pip list --outdated
+
+    - name: Security audit (pip-audit)
       run: |
-        pip install codacy-coverage
+        pip install pip-audit
+        pip-audit
+
+    - name: Wait for MySQL to be ready
+      run: |
+        for i in {1..30}; do
+          if mysqladmin ping -h 127.0.0.1 -uuvlhub_user -puvlhub_password --silent; then
+            echo "MySQL is up!"
+            break
+          fi
+          echo "Waiting for MySQL..."
+          sleep 2
+        done
+
+    - name: Run tests and generate coverage
+      env:
+        FLASK_ENV: testing
+        MARIADB_HOSTNAME: 127.0.0.1
+        MARIADB_PORT: 3306
+        MARIADB_TEST_DATABASE: uvlhubdb_test
+        MARIADB_USER: uvlhub_user
+        MARIADB_PASSWORD: uvlhub_password
+      run: |
+        pip install coverage
         coverage run -m pytest app/modules/ --ignore-glob='*selenium*'
         coverage xml 
-        python-codacy-coverage -r coverage.xml
+
+    - name: Upload coverage to Codacy (only on 3.12)
+      if: matrix.python-version == '3.12'
       env:
         FLASK_ENV: testing
         MARIADB_HOSTNAME: 127.0.0.1
@@ -51,3 +88,6 @@ jobs:
         MARIADB_USER: uvlhub_user
         MARIADB_PASSWORD: uvlhub_password
         CODACY_PROJECT_TOKEN: ${{ secrets.CODACY_PROJECT_TOKEN }}
+      run: |
+        pip install codacy-coverage
+        python-codacy-coverage -r coverage.xml
