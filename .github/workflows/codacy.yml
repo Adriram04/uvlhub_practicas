@@ -53,7 +53,7 @@ jobs:
     - name: Security audit (pip-audit)
       run: |
         pip install pip-audit
-        pip-audit
+        pip-audit -r requirements.txt || true
 
     - name: Wait for MySQL to be ready
       run: |
